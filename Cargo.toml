@@ -1,0 +1,13 @@
+[package]
+name = "advent-of-code-2019"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+# aoc-helpers = { path = "../aoc-helpers" }
+aoc-helpers = { git = "https://github.com/pierd/aoc-helpers", rev = "82a6b9e" }
+rematch = "0.1.2"
+lazy_static = "1.4.0"
+regex = "1.5.4"
