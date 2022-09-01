@@ -1,3 +1,5 @@
+use std::str::FromStr;
+
 use aoc_helpers::anyhow;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -10,6 +12,8 @@ pub enum Opcode {
     JumpIfFalse,
     LessThan,
     Equals,
+    AdjustRelativeBase,
+    Halt,
 }
 
 impl TryFrom<isize> for Opcode {
@@ -25,6 +29,8 @@ impl TryFrom<isize> for Opcode {
             6 => Ok(Self::JumpIfFalse),
             7 => Ok(Self::LessThan),
             8 => Ok(Self::Equals),
+            9 => Ok(Self::AdjustRelativeBase),
+            99 => Ok(Self::Halt),
             _ => Err(anyhow::anyhow!("Unknown opcode: {}", value)),
         }
     }
@@ -34,6 +40,7 @@ impl TryFrom<isize> for Opcode {
 pub enum Mode {
     Position,
     Immediate,
+    Relative,
 }
 
 impl TryFrom<isize> for Mode {
@@ -43,23 +50,30 @@ impl TryFrom<isize> for Mode {
         match value {
             0 => Ok(Self::Position),
             1 => Ok(Self::Immediate),
+            2 => Ok(Self::Relative),
             _ => Err(anyhow::anyhow!("Unknown mode: {}", value)),
         }
     }
 }
 
 impl Mode {
-    fn get(&self, immediate_val: isize, mem: &[isize]) -> isize {
+    fn get(&self, computer: &Computer, offset: usize) -> isize {
+        let immediate = computer.get_mem(computer.idx + offset);
         match self {
-            Mode::Position => mem[immediate_val as usize],
-            Mode::Immediate => immediate_val,
+            Mode::Position => computer.get_mem(immediate as usize),
+            Mode::Immediate => immediate,
+            Mode::Relative => computer.get_mem((computer.relative_base + immediate) as usize),
         }
     }
 
-    fn get_mut<'a>(&self, immediate_val: isize, mem: &'a mut [isize]) -> &'a mut isize {
+    fn get_mut<'a>(&self, computer: &'a mut Computer, offset: usize) -> Option<&'a mut isize> {
+        let immediate = computer.get_mem(computer.idx + offset);
         match self {
-            Mode::Position => mem.get_mut(immediate_val as usize).unwrap(),
-            Mode::Immediate => panic!(),
+            Mode::Position => Some(computer.get_mem_mut(immediate as usize)),
+            Mode::Immediate => None,
+            Mode::Relative => {
+                Some(computer.get_mem_mut((computer.relative_base + immediate) as usize))
+            }
         }
     }
 }
@@ -90,51 +104,15 @@ impl TryFrom<isize> for Instruction {
 }
 
 impl Instruction {
-    fn execute(&self, mem: &mut [isize], idx: usize) -> usize {
+    fn execute(&self, computer: &mut Computer) {
         match self.opcode {
-            Opcode::Add => {
-                let a = self.arg1_mode.get(mem[idx + 1], mem);
-                let b = self.arg2_mode.get(mem[idx + 2], mem);
-                *self.arg3_mode.get_mut(mem[idx + 3], mem) = a + b;
-                idx + 4
-            }
-            Opcode::Mul => {
-                let a = self.arg1_mode.get(mem[idx + 1], mem);
-                let b = self.arg2_mode.get(mem[idx + 2], mem);
-                *self.arg3_mode.get_mut(mem[idx + 3], mem) = a * b;
-                idx + 4
-            }
-            Opcode::Input | Opcode::Output => panic!(),
-            Opcode::JumpIfTrue => {
-                let a = self.arg1_mode.get(mem[idx + 1], mem);
-                let b = self.arg2_mode.get(mem[idx + 2], mem);
-                if a != 0 {
-                    b as usize
-                } else {
-                    idx + 3
-                }
-            }
-            Opcode::JumpIfFalse => {
-                let a = self.arg1_mode.get(mem[idx + 1], mem);
-                let b = self.arg2_mode.get(mem[idx + 2], mem);
-                if a == 0 {
-                    b as usize
-                } else {
-                    idx + 3
-                }
-            }
-            Opcode::LessThan => {
-                let a = self.arg1_mode.get(mem[idx + 1], mem);
-                let b = self.arg2_mode.get(mem[idx + 2], mem);
-                *self.arg3_mode.get_mut(mem[idx + 3], mem) = if a < b { 1 } else { 0 };
-                idx + 4
-            }
-            Opcode::Equals => {
-                let a = self.arg1_mode.get(mem[idx + 1], mem);
-                let b = self.arg2_mode.get(mem[idx + 2], mem);
-                *self.arg3_mode.get_mut(mem[idx + 3], mem) = if a == b { 1 } else { 0 };
-                idx + 4
-            }
+            Opcode::Input | Opcode::Output | Opcode::AdjustRelativeBase | Opcode::Halt => panic!(),
+            Opcode::Add => computer.mut_2args_into_3rd(self, |a, b| a + b),
+            Opcode::Mul => computer.mut_2args_into_3rd(self, |a, b| a * b),
+            Opcode::JumpIfTrue => computer.jump_if_1st_into_2nd(self, |a| a != 0),
+            Opcode::JumpIfFalse => computer.jump_if_1st_into_2nd(self, |a| a == 0),
+            Opcode::LessThan => computer.mut_2args_into_3rd(self, |a, b| if a < b { 1 } else { 0 }),
+            Opcode::Equals => computer.mut_2args_into_3rd(self, |a, b| if a == b { 1 } else { 0 }),
         }
     }
 }
@@ -143,6 +121,7 @@ impl Instruction {
 pub struct Computer {
     mem: Vec<isize>,
     idx: usize,
+    relative_base: isize,
 }
 
 impl From<&[isize]> for Computer {
@@ -150,11 +129,31 @@ impl From<&[isize]> for Computer {
         Self {
             mem: mem.to_vec(),
             idx: 0,
+            relative_base: 0,
         }
     }
 }
 
-#[derive(Clone, Copy, Debug)]
+impl FromStr for Computer {
+    type Err = anyhow::Error;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        let mem: Vec<isize> = s
+            .split(',')
+            .map(|n| {
+                n.parse::<isize>()
+                    .map_err(|err| anyhow::anyhow!("Parsing {:?} to int failed: {}", n, err))
+            })
+            .collect::<Result<_, _>>()?;
+        Ok(Self {
+            mem,
+            idx: 0,
+            relative_base: 0,
+        })
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum RunResult {
     Finished,
     WaitingForInput,
@@ -162,6 +161,33 @@ pub enum RunResult {
 }
 
 impl Computer {
+    fn mut_2args_into_3rd<F: Fn(isize, isize) -> isize>(&mut self, instr: &Instruction, fun: F) {
+        let a = instr.arg1_mode.get(self, 1);
+        let b = instr.arg2_mode.get(self, 2);
+        let result = fun(a, b);
+        *instr.arg3_mode.get_mut(self, 3).unwrap() = result;
+        self.idx += 4;
+    }
+
+    fn jump_if_1st_into_2nd<F: Fn(isize) -> bool>(&mut self, instr: &Instruction, fun: F) {
+        let a = instr.arg1_mode.get(self, 1);
+        let b = instr.arg2_mode.get(self, 2);
+        self.idx = if fun(a) { b as usize } else { self.idx + 3 }
+    }
+
+    fn get_mem(&self, idx: usize) -> isize {
+        self.mem.get(idx).copied().unwrap_or_default()
+    }
+
+    fn get_mem_mut(&mut self, idx: usize) -> &mut isize {
+        if self.mem.len() <= idx {
+            let additional = idx - self.mem.len() + 1;
+            self.mem.reserve(additional);
+            self.mem.extend(std::iter::repeat(0).take(additional));
+        }
+        self.mem.get_mut(idx).expect("should be long enough")
+    }
+
     pub fn run(&mut self, mut input: Option<isize>) -> Result<RunResult, anyhow::Error> {
         while self.idx < self.mem.len() {
             let instr: Instruction = self.mem[self.idx].try_into()?;
@@ -169,21 +195,26 @@ impl Computer {
             match instr.opcode {
                 Opcode::Input => {
                     if let Some(input) = input.take() {
-                        *instr
-                            .arg1_mode
-                            .get_mut(self.mem[self.idx + 1], &mut self.mem) = input;
+                        *instr.arg1_mode.get_mut(self, 1).unwrap() = input;
                         self.idx += 2;
                     } else {
                         return Ok(RunResult::WaitingForInput);
                     }
                 }
                 Opcode::Output => {
-                    let output = instr.arg1_mode.get(self.mem[self.idx + 1], &self.mem);
+                    let output = instr.arg1_mode.get(self, 1);
                     self.idx += 2;
                     return Ok(RunResult::Output(output));
                 }
+                Opcode::AdjustRelativeBase => {
+                    self.relative_base += instr.arg1_mode.get(self, 1);
+                    self.idx += 2;
+                }
+                Opcode::Halt => {
+                    return Ok(RunResult::Finished);
+                }
                 _ => {
-                    self.idx = instr.execute(&mut self.mem, self.idx);
+                    instr.execute(self);
                 }
             }
         }
@@ -208,12 +239,31 @@ impl Computer {
 mod tests {
     use super::*;
 
+    fn run_without_input(program: &str) -> Computer {
+        let mut c: Computer = program.parse().unwrap();
+        if let Ok(RunResult::Finished) = c.run(None) {
+            c
+        } else {
+            panic!("run_without_input didn't finish correctly")
+        }
+    }
+
+    #[test]
+    fn test_simple_commands() {
+        assert_eq!(run_without_input("1,0,0,0,99").mem, vec![2, 0, 0, 0, 99]);
+        assert_eq!(run_without_input("2,3,0,3,99").mem, vec![2, 3, 0, 6, 99]);
+        assert_eq!(
+            run_without_input("2,4,4,5,99,0").mem,
+            vec![2, 4, 4, 5, 99, 9801]
+        );
+        assert_eq!(
+            run_without_input("1,1,1,4,99,5,6,0,99").mem,
+            vec![30, 1, 1, 4, 2, 5, 6, 0, 99]
+        );
+    }
+
     fn run(program: &str, input: isize) -> isize {
-        let parsed: Vec<isize> = program
-            .split(',')
-            .map(|n| n.parse::<isize>().unwrap())
-            .collect();
-        let mut c: Computer = parsed.as_slice().into();
+        let mut c: Computer = program.parse().unwrap();
         c.run_with_constant_input(input).unwrap().unwrap()
     }
 
@@ -235,11 +285,47 @@ mod tests {
     }
 
     #[test]
+    fn test_day05_part2_sample() {
+        const PROGRAM: &str = concat!(
+            "3,21,1008,21,8,20,1005,20,22,107,8,21,20,1006,20,31,1106,0,36,98,0,0,1002,21,",
+            "125,20,4,20,1105,1,46,104,999,1105,1,46,1101,1000,1,20,4,20,1105,1,46,98,99",
+        );
+        assert_eq!(run(PROGRAM, 7), 999);
+        assert_eq!(run(PROGRAM, 8), 1000);
+        assert_eq!(run(PROGRAM, 9), 1001);
+    }
+
+    #[test]
     fn test_jumps() {
         assert_eq!(run("3,12,6,12,15,1,13,14,13,4,13,99,-1,0,1,9", 0), 0);
         assert_eq!(run("3,12,6,12,15,1,13,14,13,4,13,99,-1,0,1,9", 10), 1);
 
         assert_eq!(run("3,3,1105,-1,9,1101,0,0,12,4,12,99,1", 0), 0);
         assert_eq!(run("3,3,1105,-1,9,1101,0,0,12,4,12,99,1", 10), 1);
+    }
+
+    #[test]
+    fn test_quine() {
+        const PROGRAM: &str = "109,1,204,-1,1001,100,1,100,1008,100,16,101,1006,101,0,99";
+        let mut c: Computer = PROGRAM.parse().unwrap();
+        let parsed_program = c.mem.clone();
+        let mut output = Vec::new();
+        loop {
+            match c.run(None).unwrap() {
+                RunResult::Finished => break,
+                RunResult::WaitingForInput => panic!("shouldn't wait for input"),
+                RunResult::Output(out) => output.push(out),
+            }
+        }
+        assert_eq!(parsed_program, output);
+    }
+
+    #[test]
+    fn test_bignum() {
+        assert_eq!(
+            run("1102,34915192,34915192,7,4,7,99,0", 0),
+            34915192 * 34915192
+        );
+        assert_eq!(run("104,1125899906842624,99", 0), 1125899906842624);
     }
 }

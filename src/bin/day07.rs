@@ -54,10 +54,10 @@ impl Problem for Day07 {
             let mut done = false;
             while !done {
                 for amp in &mut amps {
-                    match amp.run(Some(output)) {
-                        Err(_) | Ok(RunResult::Finished) => done = true,
-                        Ok(RunResult::WaitingForInput) => panic!(),
-                        Ok(RunResult::Output(new_output)) => output = new_output,
+                    match amp.run(Some(output)).expect("should parse") {
+                        RunResult::Finished => done = true,
+                        RunResult::WaitingForInput => panic!(),
+                        RunResult::Output(new_output) => output = new_output,
                     }
                 }
             }
