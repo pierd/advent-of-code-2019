@@ -175,11 +175,11 @@ impl Computer {
         self.idx = if fun(a) { b as usize } else { self.idx + 3 }
     }
 
-    fn get_mem(&self, idx: usize) -> isize {
+    pub fn get_mem(&self, idx: usize) -> isize {
         self.mem.get(idx).copied().unwrap_or_default()
     }
 
-    fn get_mem_mut(&mut self, idx: usize) -> &mut isize {
+    pub fn get_mem_mut(&mut self, idx: usize) -> &mut isize {
         if self.mem.len() <= idx {
             let additional = idx - self.mem.len() + 1;
             self.mem.reserve(additional);
