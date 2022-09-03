@@ -11,3 +11,4 @@ aoc-helpers = { git = "https://github.com/pierd/aoc-helpers", rev = "82a6b9e" }
 rematch = "0.1.2"
 lazy_static = "1.4.0"
 regex = "1.5.4"
+rand = "0.8.5"
