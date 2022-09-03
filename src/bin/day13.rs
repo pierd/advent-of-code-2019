@@ -39,7 +39,7 @@ impl TryFrom<isize> for Tile {
 }
 
 impl Tile {
-    fn to_char(&self) -> char {
+    fn to_char(self) -> char {
         match self {
             Tile::Empty => ' ',
             Tile::Wall => '#',
