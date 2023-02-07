@@ -295,8 +295,7 @@ impl Problem for Day15 {
         walk::walk_broad(&mut walker, (0, oxygen_system));
         walker
             .distance
-            .into_iter()
-            .map(|(_, v)| v)
+            .into_values()
             .max()
             .expect("there should be distances")
     }

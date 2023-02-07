@@ -114,7 +114,7 @@ impl Problem for Day13 {
                 ) => {
                     if x == -1 && y == 0 {
                         if WITH_DISPLAY {
-                            println!("Score: {}", tile_id_or_score);
+                            println!("Score: {tile_id_or_score}");
                         }
                         last_score = tile_id_or_score;
                     } else {
